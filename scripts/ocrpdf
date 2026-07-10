@@ -12,7 +12,7 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-IMAGE="${OCR_IMAGE:-ghcr.io/say4n/unlimited-ocr-container:gpu}"
+IMAGE="${OCR_IMAGE:-ghcr.io/fabceolin/unlimited-ocr-container:gpu}"
 MODELS="${OCR_MODELS:-$PWD/models}"
 CONVERTER="${OCR_CONVERTER:-$HERE/grounding_to_markdown.py}"
 CONCURRENCY="${OCR_CONCURRENCY:-6}"
