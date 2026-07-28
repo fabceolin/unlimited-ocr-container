@@ -1,0 +1,6 @@
+apiVersion: v2
+name: unlimited-ocr
+description: Run fabceolin/unlimited-ocr-container OCR jobs on k3s, with optional NVIDIA device plugin setup.
+type: application
+version: 0.1.0
+appVersion: "gpu"

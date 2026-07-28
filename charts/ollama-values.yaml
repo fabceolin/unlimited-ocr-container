@@ -1,0 +1,58 @@
+# Values for ollama-helm/ollama, installed as:
+#   helm upgrade --install ollama ollama-helm/ollama -n ollama -f charts/ollama-values.yaml
+#
+# GPU isolation note: this cluster's plain nvidia-device-plugin (used by the
+# unlimited-ocr chart) has NO working per-GPU-model resource split (confirmed:
+# the "resources" pattern-matching config is a documented-looking no-op in the
+# current plugin build). So Ollama does NOT request a k8s "nvidia.com/gpu"
+# resource at all here -- instead it gets the P40 + 1 RTX 3060 directly via
+# NVIDIA_VISIBLE_DEVICES (validated empirically: this restricts container GPU
+# visibility at the CDI/cgroup level, independent of any app-level env-var
+# handling). The unlimited-ocr device plugin pool is separately restricted to
+# NVIDIA_VISIBLE_DEVICES="1,2,3", so it can never schedule onto GPU 0 or 4.
+
+replicaCount: 1
+
+image:
+  pullPolicy: IfNotPresent
+
+runtimeClassName: "nvidia"
+
+ollama:
+  gpu:
+    # Deliberately false: see note above. GPU access comes from extraEnv +
+    # runtimeClassName below, not a k8s device-plugin resource request.
+    enabled: false
+  models:
+    pull: []
+    run: []
+    create: []
+
+# Same behavior as the bare-metal systemd unit's zz-parallel.conf drop-in.
+extraEnv:
+  - name: NVIDIA_VISIBLE_DEVICES
+    value: "0,4"  # RTX 3060 index 0 + Tesla P40 (index 4)
+  # OLLAMA_HOST already defaults to 0.0.0.0:11434 in this chart.
+  - name: OLLAMA_SCHED_SPREAD
+    value: "1"
+  - name: OLLAMA_NUM_PARALLEL
+    value: "2"
+  - name: OLLAMA_KEEP_ALIVE
+    value: "30m"
+  - name: OLLAMA_CONTEXT_LENGTH
+    value: "8192"
+
+# Reuse the existing bare-metal model downloads (94GB+) via the pre-bound
+# static PV/PVC pointing at /usr/share/ollama/.ollama on the host -- no
+# re-download.
+persistentVolume:
+  enabled: true
+  existingClaim: ollama-data-pvc
+
+# Keeps port 11434 reachable on the node's own IP exactly like the systemd
+# service did (no NodePort range issue, no separate Ingress needed).
+hostNetwork: true
+
+service:
+  type: ClusterIP
+  port: 11434

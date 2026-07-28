@@ -1,0 +1,24 @@
+{{- if .Values.gpu.installDevicePlugin }}
+NVIDIA device plugin installed in namespace {{ .Values.gpu.devicePlugin.namespace }}.
+Check it's advertising GPUs to the node:
+
+  kubectl get ds -n {{ .Values.gpu.devicePlugin.namespace }} nvidia-device-plugin-daemonset
+  kubectl get node -o jsonpath='{.items[0].status.allocatable.nvidia\.com/gpu}{"\n"}'
+
+{{- end }}
+{{- if .Values.job.enabled }}
+OCR Job "{{ include "unlimited-ocr.jobName" . }}" submitted.
+
+Follow it:
+  kubectl logs -f job/{{ include "unlimited-ocr.jobName" . }}
+  kubectl get job {{ include "unlimited-ocr.jobName" . }}
+
+Output Markdown will land on the node under: {{ .Values.hostPaths.outputs }}
+{{- end }}
+{{- if .Values.api.enabled }}
+API deployed as Service "{{ .Release.Name }}-api" ({{ .Values.api.service.type }}, port {{ .Values.api.service.port }}).
+
+Try it:
+  kubectl port-forward svc/{{ .Release.Name }}-api {{ .Values.api.service.port }}:{{ .Values.api.service.port }}
+  curl -F file=@document.pdf http://localhost:{{ .Values.api.service.port }}/v1/ocr -o result.md
+{{- end }}

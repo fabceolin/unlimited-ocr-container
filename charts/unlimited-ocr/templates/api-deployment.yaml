@@ -1,0 +1,93 @@
+{{- if .Values.api.enabled }}
+{{- $isGpu := eq .Values.image.variant "gpu" }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-api
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/name: unlimited-ocr-api
+spec:
+  replicas: {{ .Values.api.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/name: unlimited-ocr-api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/name: unlimited-ocr-api
+    spec:
+      serviceAccountName: {{ .Release.Name }}-api
+      containers:
+        - name: api
+          image: "{{ .Values.api.image.repository }}:{{ .Values.api.image.tag }}"
+          imagePullPolicy: {{ .Values.api.image.pullPolicy }}
+          ports:
+            - containerPort: 8000
+          env:
+            - name: OCR_NAMESPACE
+              value: {{ .Release.Namespace }}
+            - name: OCR_IMAGE
+              value: {{ include "unlimited-ocr.image" . }}
+            {{- if $isGpu }}
+            - name: OCR_RUNTIME_CLASS
+              value: {{ .Values.gpu.runtimeClassName }}
+            - name: OCR_GPU_COUNT
+              value: "{{ .Values.resources.gpuCount }}"
+            - name: OCR_GPU_RESOURCE_NAME
+              value: {{ .Values.resources.gpuResourceName }}
+            {{- end }}
+            - name: OCR_HOST_DATA_DIR
+              value: {{ .Values.hostPaths.data }}
+            - name: OCR_HOST_OUTPUTS_DIR
+              value: {{ .Values.hostPaths.outputs }}
+            - name: OCR_HOST_LOG_DIR
+              value: {{ .Values.hostPaths.log }}
+            - name: OCR_HOST_MODELS_DIR
+              value: {{ .Values.hostPaths.models }}
+            - name: OCR_CONCURRENCY
+              value: "{{ .Values.api.concurrency }}"
+            - name: OCR_IMAGE_MODE
+              value: {{ .Values.api.imageMode }}
+            - name: OCR_JOB_TTL_SECONDS
+              value: "{{ .Values.api.job.ttlSecondsAfterFinished }}"
+            - name: OCR_JOB_ACTIVE_DEADLINE
+              value: "{{ .Values.api.job.activeDeadlineSeconds }}"
+            - name: OCR_POLL_TIMEOUT_SECONDS
+              value: "{{ .Values.api.job.pollTimeoutSeconds }}"
+            {{- if .Values.api.apiKey }}
+            - name: OCR_API_KEY
+              value: {{ .Values.api.apiKey | quote }}
+            {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /v1/health
+              port: 8000
+            initialDelaySeconds: 2
+          livenessProbe:
+            httpGet:
+              path: /v1/health
+              port: 8000
+            initialDelaySeconds: 5
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: outputs
+              mountPath: /outputs
+          {{- with .Values.api.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: data
+          hostPath:
+            path: {{ .Values.hostPaths.data }}
+            type: DirectoryOrCreate
+        - name: outputs
+          hostPath:
+            path: {{ .Values.hostPaths.outputs }}
+            type: DirectoryOrCreate
+{{- end }}

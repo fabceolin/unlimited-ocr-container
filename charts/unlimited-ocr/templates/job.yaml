@@ -1,0 +1,130 @@
+{{- if .Values.job.enabled }}
+{{- $isGpu := eq .Values.image.variant "gpu" }}
+{{- if and (eq .Values.ocr.mode "image_file") $isGpu }}
+{{- fail "ocr.mode=image_file is only supported by the cpu image variant (image.variant=cpu)" }}
+{{- end }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "unlimited-ocr.jobName" . }}
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/name: unlimited-ocr
+spec:
+  backoffLimit: {{ .Values.job.backoffLimit }}
+  {{- if .Values.job.ttlSecondsAfterFinished }}
+  ttlSecondsAfterFinished: {{ .Values.job.ttlSecondsAfterFinished }}
+  {{- end }}
+  {{- if .Values.job.activeDeadlineSeconds }}
+  activeDeadlineSeconds: {{ .Values.job.activeDeadlineSeconds }}
+  {{- end }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/name: unlimited-ocr
+    spec:
+      restartPolicy: Never
+      {{- if $isGpu }}
+      runtimeClassName: {{ .Values.gpu.runtimeClassName }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: unlimited-ocr
+          image: {{ include "unlimited-ocr.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            {{- if eq .Values.ocr.mode "pdf" }}
+            - --pdf
+            - /data/{{ .Values.ocr.input }}
+            {{- else if eq .Values.ocr.mode "image_dir" }}
+            - --image_dir
+            - /data/{{ .Values.ocr.input }}
+            {{- else if eq .Values.ocr.mode "image_file" }}
+            - --image_file
+            - /data/{{ .Values.ocr.input }}
+            {{- end }}
+            - --output_dir
+            - {{ .Values.ocr.outputDir }}
+            - --image_mode
+            - {{ .Values.ocr.imageMode }}
+            {{- if .Values.ocr.modelDir }}
+            - --model_dir
+            - {{ .Values.ocr.modelDir }}
+            {{- end }}
+            {{- if $isGpu }}
+            - --concurrency
+            - "{{ .Values.ocr.concurrency }}"
+            - --gpu
+            - "{{ .Values.ocr.gpuIndex }}"
+            {{- if .Values.ocr.serverLog }}
+            - --server_log
+            - {{ .Values.ocr.serverLog }}
+            {{- end }}
+            {{- else }}
+            {{- if .Values.ocr.maxLength }}
+            - --max_length
+            - "{{ .Values.ocr.maxLength }}"
+            {{- end }}
+            {{- if .Values.ocr.pdfDpi }}
+            - --pdf_dpi
+            - "{{ .Values.ocr.pdfDpi }}"
+            {{- end }}
+            {{- end }}
+          {{- if or .Values.huggingface.token .Values.huggingface.existingSecret }}
+          env:
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.huggingface.existingSecret | default (printf "%s-hf" (include "unlimited-ocr.jobName" .)) }}
+                  key: {{ .Values.huggingface.existingSecretKey }}
+          {{- end }}
+          {{- if or $isGpu .Values.resources.cpu .Values.resources.memory }}
+          resources:
+            limits:
+              {{- if $isGpu }}
+              {{ .Values.resources.gpuResourceName }}: "{{ .Values.resources.gpuCount }}"
+              {{- end }}
+              {{- if .Values.resources.cpu }}
+              cpu: {{ .Values.resources.cpu }}
+              {{- end }}
+              {{- if .Values.resources.memory }}
+              memory: {{ .Values.resources.memory }}
+              {{- end }}
+          {{- end }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+              readOnly: true
+            - name: outputs
+              mountPath: /workspace/outputs
+            - name: log
+              mountPath: /workspace/log
+            - name: models
+              mountPath: /models
+      volumes:
+        - name: data
+          hostPath:
+            path: {{ .Values.hostPaths.data }}
+            type: Directory
+        - name: outputs
+          hostPath:
+            path: {{ .Values.hostPaths.outputs }}
+            type: DirectoryOrCreate
+        - name: log
+          hostPath:
+            path: {{ .Values.hostPaths.log }}
+            type: DirectoryOrCreate
+        - name: models
+          hostPath:
+            path: {{ .Values.hostPaths.models }}
+            type: DirectoryOrCreate
+{{- end }}

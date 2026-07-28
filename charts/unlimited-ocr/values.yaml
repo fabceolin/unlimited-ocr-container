@@ -1,0 +1,134 @@
+# -- Two things live in this chart:
+#   1. gpu.installDevicePlugin: cluster-wide NVIDIA device plugin (install ONCE, in its own release).
+#   2. job.enabled: the OCR batch Job itself (install once PER document/run, in its own release).
+# See NOTES.txt / README.md after `helm install` for the exact two-step flow.
+
+# -----------------------------------------------------------------------------
+# GPU infrastructure (shared, cluster-scoped). Leave off for per-document releases.
+# -----------------------------------------------------------------------------
+gpu:
+  # Set true only in a dedicated infra release, e.g.:
+  #   helm install ocr-gpu-infra ./charts/unlimited-ocr --set gpu.installDevicePlugin=true --set job.enabled=false
+  installDevicePlugin: false
+  # This cluster already has a `RuntimeClass/nvidia` created outside Helm. Leave false here.
+  # Set true only on a cluster that doesn't have it yet.
+  installRuntimeClass: false
+  devicePlugin:
+    namespace: kube-system
+    image:
+      repository: nvcr.io/nvidia/k8s-device-plugin
+      tag: v0.15.0-rc.2
+    # Comma-separated GPU indices/UUIDs to expose to the device-plugin container.
+    # NOTE: NVIDIA_VISIBLE_DEVICES=all bypasses the host's /etc/cdi/nvidia.yaml
+    # restriction and re-enumerates every physical GPU directly, so it does NOT
+    # protect against an unhealthy GPU by itself -- restrict this list explicitly
+    # if any GPU on the node fails NVML enumeration (see chart README: this
+    # cluster's index 3 / 0000:0C:00.0 intermittently fails with "Unknown Error").
+    #
+    # This cluster also mixes GPU generations (4x RTX 3060 + 1x Tesla P40, plus
+    # Ollama permanently reserving the P40 + 1 RTX 3060 outside this pool -- see
+    # ~/src/ollama-k3s). The PyTorch build bundled in the unlimited-ocr image
+    # only supports sm_70+, so a Job scheduled onto the P40 (sm_61) fails with
+    # "CUDA error: no kernel image is available for execution on the device".
+    #
+    # NOTE: the upstream device plugin's per-GPU-model "resources" renaming
+    # (matching by product-name pattern) is NOT actually implemented despite
+    # being a documented-looking config field -- confirmed empirically: it logs
+    # "Customizing the 'resources' field is not yet supported in the config.
+    # Ignoring..." and silently falls back to a single flat "nvidia.com/gpu"
+    # pool covering whatever NVIDIA_VISIBLE_DEVICES exposes. So exclusion has
+    # to happen here, by listing exactly the GPUs this pool should cover. On
+    # this cluster that's the 3 RTX 3060s NOT reserved by Ollama: "1,2,3".
+    visibleDevices: "all"
+  runtimeClassName: nvidia
+
+# -----------------------------------------------------------------------------
+# OCR Job (per-document/run release).
+# -----------------------------------------------------------------------------
+job:
+  enabled: true
+  # Auto-delete the Job (and its Pod) N seconds after it finishes. Set null to keep forever.
+  ttlSecondsAfterFinished: 3600
+  backoffLimit: 0
+  activeDeadlineSeconds: 3600
+
+image:
+  repository: ghcr.io/fabceolin/unlimited-ocr-container
+  # "gpu" or "cpu"
+  variant: gpu
+  tag: ""
+  pullPolicy: IfNotPresent
+
+# Selects which docker run flag combination gets rendered. One of: pdf, image_dir, image_file.
+ocr:
+  mode: pdf
+  # Path *inside the container* under /data. E.g. document.pdf, or a sub-directory for image_dir mode.
+  input: document.pdf
+  outputDir: /workspace/outputs
+  imageMode: gundam
+  modelDir: ""
+  # GPU-only options (ignored for image.variant=cpu):
+  concurrency: 8
+  gpuIndex: "0"
+  serverLog: /workspace/log/sglang_server.log
+  # CPU-only option (ignored for image.variant=gpu):
+  maxLength: ""
+  pdfDpi: ""
+
+# GPU resource requested by the Job (only applied when image.variant=gpu).
+resources:
+  gpuCount: 1
+  # Almost always plain "nvidia.com/gpu" -- kept overridable in case a future
+  # cluster does have working per-model resource renaming in its device plugin.
+  gpuResourceName: "nvidia.com/gpu"
+  cpu: ""
+  memory: ""
+
+# Host directories on the k3s node (single-node cluster), mounted via hostPath.
+hostPaths:
+  data: /srv/unlimited-ocr/data
+  outputs: /srv/unlimited-ocr/outputs
+  log: /srv/unlimited-ocr/log
+  models: /srv/unlimited-ocr/models
+
+huggingface:
+  # Plaintext token (dev convenience). Prefer existingSecret for anything shared.
+  token: ""
+  # Name of a pre-existing Secret with the HF token.
+  existingSecret: ""
+  existingSecretKey: HF_TOKEN
+
+nodeSelector: {}
+tolerations: []
+
+# -----------------------------------------------------------------------------
+# HTTP API (own release, e.g. `helm install ocr-api ./charts/unlimited-ocr
+# --set api.enabled=true --set job.enabled=false`). Accepts a PDF over HTTP,
+# creates an OCR Job per request (same shape as templates/job.yaml), waits for
+# it, and returns cleaned Markdown. Build/import the image first:
+#   docker build -f api/Dockerfile -t unlimited-ocr-api:local .
+#   docker save unlimited-ocr-api:local | sudo k3s ctr images import -
+# -----------------------------------------------------------------------------
+api:
+  enabled: false
+  replicas: 1
+  image:
+    repository: unlimited-ocr-api
+    tag: local
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 80
+  ingress:
+    enabled: false
+    className: traefik
+    host: ""
+  # Optional shared secret; when set, callers must send header X-API-Key.
+  apiKey: ""
+  concurrency: 8
+  imageMode: gundam
+  job:
+    ttlSecondsAfterFinished: 600
+    activeDeadlineSeconds: 1800
+    pollTimeoutSeconds: 900
+  resources: {}
