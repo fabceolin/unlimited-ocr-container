@@ -76,6 +76,19 @@ helm upgrade ocr-api ./charts/unlimited-ocr -n ocr \
   --set api.image.repository=localhost:5000/unlimited-ocr-api
 ```
 
+**The mirror is a static cache, not a pull-through proxy**: once a tag exists in
+`localhost:5000`, k3s never re-checks the real `ghcr.io` for a newer digest under that same tag --
+a fresh CI publish silently has no effect on the cluster until the local copy is refreshed. Run
+`scripts/refresh-registry-mirror.sh` after any new publish (pulls the latest of all 3 GPU images
+from `ghcr.io` and re-pushes to `localhost:5000`). It also runs automatically once a day via a
+systemd timer:
+
+```bash
+sudo systemctl status registry-mirror-refresh.timer   # next/last run
+sudo systemctl start registry-mirror-refresh.service   # run it now, on demand
+journalctl -u registry-mirror-refresh.service          # past run logs
+```
+
 ### Unhealthy GPU workaround (this cluster)
 
 `dev` has 4 physical GPUs; one of them (`0000:0C:00.0`, NVML index 3) intermittently fails with
