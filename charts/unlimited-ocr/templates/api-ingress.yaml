@@ -6,8 +6,23 @@ metadata:
   labels:
     app.kubernetes.io/managed-by: {{ .Release.Service }}
     app.kubernetes.io/instance: {{ .Release.Name }}
+  {{- if or .Values.api.ingress.tls.enabled .Values.api.ingress.middleware }}
+  annotations:
+    {{- if .Values.api.ingress.tls.enabled }}
+    cert-manager.io/cluster-issuer: {{ .Values.api.ingress.tls.clusterIssuer }}
+    {{- end }}
+    {{- if .Values.api.ingress.middleware }}
+    traefik.ingress.kubernetes.io/router.middlewares: {{ .Values.api.ingress.middleware }}
+    {{- end }}
+  {{- end }}
 spec:
   ingressClassName: {{ .Values.api.ingress.className }}
+  {{- if .Values.api.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.api.ingress.host | quote }}
+      secretName: {{ .Values.api.ingress.tls.secretName | default (printf "%s-api-tls" .Release.Name) }}
+  {{- end }}
   rules:
     - host: {{ .Values.api.ingress.host | quote }}
       http:

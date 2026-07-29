@@ -173,12 +173,28 @@ Call it (from the node, or via `kubectl port-forward` from anywhere with cluster
 
 ```bash
 kubectl port-forward -n ocr svc/ocr-api-api 8080:80 &
+
+# synchronous: blocks until the job finishes, returns the Markdown directly
 curl -F file=@document.pdf http://localhost:8080/v1/ocr -o result.md
+
+# asynchronous: returns immediately with a request_id, poll for the result
+request_id=$(curl -s -F file=@document.pdf http://localhost:8080/v1/ocr/async | jq -r .request_id)
+until curl -s -o result.md -w '%{http_code}' "http://localhost:8080/v1/ocr/async/$request_id" | grep -q 200; do sleep 5; done
 ```
+
+Use `/v1/ocr/async` for anything that might run past a minute or two, or behind a proxy with a
+fixed connection timeout (e.g. Cloudflare's ~100s edge timeout on non-Enterprise plans) — the
+upload connection returns instantly and the job keeps running server-side regardless of whether
+anyone is polling. `GET /v1/ocr/async/{request_id}` returns `202 {"status": "queued"}` while
+waiting on a free GPU, `202 {"status": "running"}` once actually processing, the Markdown (`200`)
+once it's done, `502` if the job failed, `404` for an unknown/expired `request_id`. The result is
+consumed on read: the Job and its scratch data are
+cleaned up right after a successful `GET` returns it.
 
 Notes:
 - `--set api.apiKey=<secret>` gates requests behind a required `X-API-Key` header.
-- `?raw=true` returns the raw grounding output (`<|det|>...` tags) instead of cleaned Markdown.
+- `?raw=true` (on either flavor) returns the raw grounding output (`<|det|>...` tags) instead of
+  cleaned Markdown.
 - `--set api.ingress.enabled=true --set api.ingress.host=ocr.example.lan` exposes it through the
   Traefik ingress already running on this cluster instead of `port-forward`.
 - Cold-start cost is unavoidable per request in this design: each call pays for a fresh SGLang

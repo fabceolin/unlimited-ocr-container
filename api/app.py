@@ -13,7 +13,8 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, File, Header, HTTPException, Query, UploadFile
-from fastapi.responses import PlainTextResponse
+from fastapi import Path as PathParam
+from fastapi.responses import JSONResponse, PlainTextResponse
 from kubernetes import client, config
 
 from grounding_to_markdown import load_pages, to_markdown
@@ -39,6 +40,7 @@ OUTPUTS_DIR = Path("/outputs")
 
 config.load_incluster_config()
 batch_v1 = client.BatchV1Api()
+core_v1 = client.CoreV1Api()
 
 app = FastAPI(title="unlimited-ocr-api")
 
@@ -153,6 +155,51 @@ def cleanup_job(job_name: str):
         pass
 
 
+def job_paths(request_id: str):
+    return DATA_DIR / f"api-{request_id}", OUTPUTS_DIR / f"api-{request_id}"
+
+
+def job_phase(job_name: str) -> str:
+    """"queued" until the Job's Pod is actually Running -- distinguishes
+    waiting on a free GPU (Pending) from doing real work (Running), since
+    Job status alone (.status.active) doesn't tell them apart."""
+    pods = core_v1.list_namespaced_pod(namespace=NAMESPACE, label_selector=f"job-name={job_name}").items
+    return "running" if any(p.status.phase == "Running" for p in pods) else "queued"
+
+
+def submit_job(file: UploadFile, image_mode: str, concurrency: int):
+    """Validate + persist the upload and create the K8s Job. Returns (request_id, job_name, in_dir, out_dir)."""
+    if not (file.filename or "").lower().endswith(".pdf"):
+        raise HTTPException(400, "only .pdf uploads are supported")
+
+    request_id = uuid.uuid4().hex[:12]
+    in_dir, out_dir = job_paths(request_id)
+    in_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        with (in_dir / "input.pdf").open("wb") as f:
+            shutil.copyfileobj(file.file, f)
+
+        job_manifest, job_name = build_job(request_id, image_mode, concurrency)
+        batch_v1.create_namespaced_job(namespace=NAMESPACE, body=job_manifest)
+    except Exception:
+        shutil.rmtree(in_dir, ignore_errors=True)
+        raise
+
+    return request_id, job_name, in_dir, out_dir
+
+
+def read_result(out_dir: Path, raw: bool) -> str:
+    page_files = sorted(out_dir.glob("*_page_*.md"))
+    if not page_files:
+        raise HTTPException(500, "job completed but produced no output")
+
+    if raw:
+        return "\n\n".join(p.read_text(encoding="utf-8") for p in page_files)
+    pages = load_pages([str(out_dir)])
+    return to_markdown(pages, gfm=True)
+
+
 @app.get("/v1/health")
 def health():
     return {"status": "ok"}
@@ -166,34 +213,16 @@ def ocr(
     raw: bool = Query(False, description="return raw grounding output instead of cleaned GFM markdown"),
     x_api_key: Optional[str] = Header(default=None),
 ):
+    """Synchronous: blocks until the OCR job finishes and returns the Markdown.
+    Simple, but a large PDF can outlast intermediary timeouts (e.g. Cloudflare's
+    fixed ~100s edge timeout) even though the job keeps running server-side.
+    Prefer /v1/ocr/async for anything that might take more than a minute or two."""
     check_api_key(x_api_key)
-    if not (file.filename or "").lower().endswith(".pdf"):
-        raise HTTPException(400, "only .pdf uploads are supported")
-
-    request_id = uuid.uuid4().hex[:12]
-    in_dir = DATA_DIR / f"api-{request_id}"
-    out_dir = OUTPUTS_DIR / f"api-{request_id}"
-    in_dir.mkdir(parents=True, exist_ok=True)
-
-    with (in_dir / "input.pdf").open("wb") as f:
-        shutil.copyfileobj(file.file, f)
-
-    job_manifest, job_name = build_job(request_id, image_mode, concurrency)
+    request_id, job_name, in_dir, out_dir = submit_job(file, image_mode, concurrency)
 
     try:
-        batch_v1.create_namespaced_job(namespace=NAMESPACE, body=job_manifest)
         wait_for_job(job_name)
-
-        page_files = sorted(out_dir.glob("*_page_*.md"))
-        if not page_files:
-            raise HTTPException(500, "job completed but produced no output")
-
-        if raw:
-            text = "\n\n".join(p.read_text(encoding="utf-8") for p in page_files)
-        else:
-            pages = load_pages([str(out_dir)])
-            text = to_markdown(pages, gfm=True)
-
+        text = read_result(out_dir, raw)
         return PlainTextResponse(
             text, media_type="text/markdown", headers={"X-Request-Id": request_id}
         )
@@ -205,3 +234,64 @@ def ocr(
         cleanup_job(job_name)
         shutil.rmtree(in_dir, ignore_errors=True)
         shutil.rmtree(out_dir, ignore_errors=True)
+
+
+@app.post("/v1/ocr/async", status_code=202)
+def ocr_async_submit(
+    file: UploadFile = File(...),
+    image_mode: str = Query(DEFAULT_IMAGE_MODE, pattern="^(gundam|base)$"),
+    concurrency: int = Query(int(DEFAULT_CONCURRENCY), ge=1, le=32),
+    x_api_key: Optional[str] = Header(default=None),
+):
+    """Asynchronous: creates the Job and returns immediately with a request_id.
+    Poll GET /v1/ocr/async/{request_id} for the result -- avoids any client- or
+    proxy-side timeout on the upload connection since it never waits on the job."""
+    check_api_key(x_api_key)
+    request_id, _job_name, _in_dir, _out_dir = submit_job(file, image_mode, concurrency)
+    return JSONResponse(
+        {"request_id": request_id, "status": "queued", "result_url": f"/v1/ocr/async/{request_id}"},
+        status_code=202,
+        headers={"X-Request-Id": request_id},
+    )
+
+
+@app.get("/v1/ocr/async/{request_id}")
+def ocr_async_result(
+    request_id: str = PathParam(..., pattern="^[0-9a-f]{12}$"),
+    raw: bool = Query(False, description="return raw grounding output instead of cleaned GFM markdown"),
+    x_api_key: Optional[str] = Header(default=None),
+):
+    """Poll for the result of a job submitted via POST /v1/ocr/async.
+    202 {"status": "queued"} while waiting on a free GPU, 202 {"status": "running"}
+    once actually processing, 200 with the Markdown once it's done (result is
+    consumed on read: the Job and its data are cleaned up after this call
+    returns it), 502 if the job failed, 404 for an unknown request_id."""
+    check_api_key(x_api_key)
+    job_name = f"ocr-api-{request_id}"
+    in_dir, out_dir = job_paths(request_id)
+
+    try:
+        status = batch_v1.read_namespaced_job_status(name=job_name, namespace=NAMESPACE).status
+    except client.exceptions.ApiException as e:
+        if e.status == 404:
+            raise HTTPException(404, f"unknown request_id: {request_id}")
+        raise
+
+    if status.succeeded:
+        try:
+            text = read_result(out_dir, raw)
+            return PlainTextResponse(
+                text, media_type="text/markdown", headers={"X-Request-Id": request_id}
+            )
+        finally:
+            cleanup_job(job_name)
+            shutil.rmtree(in_dir, ignore_errors=True)
+            shutil.rmtree(out_dir, ignore_errors=True)
+
+    if status.failed:
+        cleanup_job(job_name)
+        shutil.rmtree(in_dir, ignore_errors=True)
+        shutil.rmtree(out_dir, ignore_errors=True)
+        raise HTTPException(502, f"OCR job failed: {job_name}")
+
+    return JSONResponse({"request_id": request_id, "status": job_phase(job_name)}, status_code=202)

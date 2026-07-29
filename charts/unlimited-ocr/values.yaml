@@ -123,6 +123,14 @@ api:
     enabled: false
     className: traefik
     host: ""
+    # Traefik middleware ref, e.g. "ollama-ollama-basicauth@kubernetescrd" -- gates this
+    # Ingress behind HTTP Basic Auth without touching the app itself.
+    middleware: ""
+    tls:
+      enabled: true
+      # Defaults to "<release-name>-api-tls" when empty.
+      secretName: ""
+      clusterIssuer: letsencrypt-cloudflare
   # Optional shared secret; when set, callers must send header X-API-Key.
   apiKey: ""
   concurrency: 8
