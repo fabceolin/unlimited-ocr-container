@@ -71,7 +71,13 @@ ocr:
   imageMode: base
   modelDir: ""
   # GPU-only options (ignored for image.variant=cpu):
-  concurrency: 8
+  # concurrency=8 (previous default) reliably kills the SGLang server on any
+  # multi-page document on this cluster's 12GB RTX 3060 pool: the shared KV
+  # cache pool is only ~2.9GB/50801 tokens, and dispatching 8 pages at once
+  # exhausts it -- server dies silently (no traceback, just stops accepting
+  # connections) partway through. concurrency=1 (serial) tested clean on a
+  # 12-page doc; see charts/unlimited-ocr/README.md.
+  concurrency: 1
   gpuIndex: "0"
   serverLog: /workspace/log/sglang_server.log
   # CPU-only option (ignored for image.variant=gpu):
@@ -136,7 +142,8 @@ api:
       clusterIssuer: letsencrypt-cloudflare
   # Optional shared secret; when set, callers must send header X-API-Key.
   apiKey: ""
-  concurrency: 8
+  # See ocr.concurrency above: 8 kills the SGLang server on any multi-page doc here.
+  concurrency: 1
   # See ocr.imageMode above: "gundam" OOMs on this cluster's 12GB RTX 3060 pool.
   imageMode: base
   job:
