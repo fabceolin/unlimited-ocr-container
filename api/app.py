@@ -216,24 +216,29 @@ def ocr(
     """Synchronous: blocks until the OCR job finishes and returns the Markdown.
     Simple, but a large PDF can outlast intermediary timeouts (e.g. Cloudflare's
     fixed ~100s edge timeout) even though the job keeps running server-side.
-    Prefer /v1/ocr/async for anything that might take more than a minute or two."""
+    Prefer /v1/ocr/async for anything that might take more than a minute or two.
+    On failure -- job failure, timeout, or success with no output -- the Job and
+    its data are left in place (until OCR_JOB_TTL_SECONDS) instead of being wiped,
+    so `kubectl logs job/<name>` stays inspectable."""
     check_api_key(x_api_key)
     request_id, job_name, in_dir, out_dir = submit_job(file, image_mode, concurrency)
 
     try:
         wait_for_job(job_name)
-        text = read_result(out_dir, raw)
-        return PlainTextResponse(
-            text, media_type="text/markdown", headers={"X-Request-Id": request_id}
-        )
     except JobFailed as e:
-        raise HTTPException(502, f"OCR job failed: {e}")
+        raise HTTPException(
+            502, f"OCR job failed: {e} (inspect: kubectl logs -n {NAMESPACE} job/{job_name})"
+        )
     except JobTimeout as e:
         raise HTTPException(504, str(e))
-    finally:
-        cleanup_job(job_name)
-        shutil.rmtree(in_dir, ignore_errors=True)
-        shutil.rmtree(out_dir, ignore_errors=True)
+
+    text = read_result(out_dir, raw)  # raises 500 without touching the Job/dirs if empty
+    cleanup_job(job_name)
+    shutil.rmtree(in_dir, ignore_errors=True)
+    shutil.rmtree(out_dir, ignore_errors=True)
+    return PlainTextResponse(
+        text, media_type="text/markdown", headers={"X-Request-Id": request_id}
+    )
 
 
 @app.post("/v1/ocr/async", status_code=202)
@@ -263,9 +268,12 @@ def ocr_async_result(
 ):
     """Poll for the result of a job submitted via POST /v1/ocr/async.
     202 {"status": "queued"} while waiting on a free GPU, 202 {"status": "running"}
-    once actually processing, 200 with the Markdown once it's done (result is
-    consumed on read: the Job and its data are cleaned up after this call
-    returns it), 502 if the job failed, 404 for an unknown request_id."""
+    once actually processing, 200 with the Markdown once it's done, 502 if the
+    job failed, 404 for an unknown request_id. Only a successful read cleans
+    up the Job and its data (consumed on read); a failure -- either the Job
+    itself failing, or it succeeding but producing no output -- leaves both in
+    place so `kubectl logs job/<name>` and the raw output dir stay inspectable
+    until the Job's own TTL (OCR_JOB_TTL_SECONDS) sweeps them."""
     check_api_key(x_api_key)
     job_name = f"ocr-api-{request_id}"
     in_dir, out_dir = job_paths(request_id)
@@ -278,20 +286,17 @@ def ocr_async_result(
         raise
 
     if status.succeeded:
-        try:
-            text = read_result(out_dir, raw)
-            return PlainTextResponse(
-                text, media_type="text/markdown", headers={"X-Request-Id": request_id}
-            )
-        finally:
-            cleanup_job(job_name)
-            shutil.rmtree(in_dir, ignore_errors=True)
-            shutil.rmtree(out_dir, ignore_errors=True)
-
-    if status.failed:
+        text = read_result(out_dir, raw)  # raises 500 without touching the Job/dirs if empty
         cleanup_job(job_name)
         shutil.rmtree(in_dir, ignore_errors=True)
         shutil.rmtree(out_dir, ignore_errors=True)
-        raise HTTPException(502, f"OCR job failed: {job_name}")
+        return PlainTextResponse(
+            text, media_type="text/markdown", headers={"X-Request-Id": request_id}
+        )
+
+    if status.failed:
+        raise HTTPException(
+            502, f"OCR job failed: {job_name} (inspect: kubectl logs -n {NAMESPACE} job/{job_name})"
+        )
 
     return JSONResponse({"request_id": request_id, "status": job_phase(job_name)}, status_code=202)

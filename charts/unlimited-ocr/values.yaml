@@ -65,7 +65,10 @@ ocr:
   # Path *inside the container* under /data. E.g. document.pdf, or a sub-directory for image_dir mode.
   input: document.pdf
   outputDir: /workspace/outputs
-  imageMode: gundam
+  # "gundam" (high-res tiling) reliably OOMs on this cluster's 12GB RTX 3060 pool --
+  # the model weights alone take ~10.5GB, leaving no headroom for the vision
+  # encoder's tiled forward pass. "base" (single-resolution, no tiling) fits.
+  imageMode: base
   modelDir: ""
   # GPU-only options (ignored for image.variant=cpu):
   concurrency: 8
@@ -134,7 +137,8 @@ api:
   # Optional shared secret; when set, callers must send header X-API-Key.
   apiKey: ""
   concurrency: 8
-  imageMode: gundam
+  # See ocr.imageMode above: "gundam" OOMs on this cluster's 12GB RTX 3060 pool.
+  imageMode: base
   job:
     ttlSecondsAfterFinished: 600
     activeDeadlineSeconds: 1800
