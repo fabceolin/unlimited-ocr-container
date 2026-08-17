@@ -26,10 +26,14 @@ gpu:
     # cluster's index 3 / 0000:0C:00.0 intermittently fails with "Unknown Error").
     #
     # This cluster also mixes GPU generations (4x RTX 3060 + 1x Tesla P40, plus
-    # Ollama permanently reserving the P40 + 1 RTX 3060 outside this pool -- see
-    # ~/src/ollama-k3s). The PyTorch build bundled in the unlimited-ocr image
-    # only supports sm_70+, so a Job scheduled onto the P40 (sm_61) fails with
-    # "CUDA error: no kernel image is available for execution on the device".
+    # Ollama permanently reserving the P40 (index 4) outside this pool -- see
+    # ~/src/ollama-k3s. Ollama used to also reserve 1 RTX 3060 (index 0) as a
+    # second card for models too large for the P40's 24GB alone; as of
+    # 2026-08-08 the model in use fits entirely on the P40, so index 0 was
+    # released back to this pool (2026-08-08). The PyTorch build bundled in
+    # the unlimited-ocr image only supports sm_70+, so a Job scheduled onto
+    # the P40 (sm_61) fails with "CUDA error: no kernel image is available
+    # for execution on the device".
     #
     # NOTE: the upstream device plugin's per-GPU-model "resources" renaming
     # (matching by product-name pattern) is NOT actually implemented despite
@@ -38,7 +42,7 @@ gpu:
     # Ignoring..." and silently falls back to a single flat "nvidia.com/gpu"
     # pool covering whatever NVIDIA_VISIBLE_DEVICES exposes. So exclusion has
     # to happen here, by listing exactly the GPUs this pool should cover. On
-    # this cluster that's the 3 RTX 3060s NOT reserved by Ollama: "1,2,3".
+    # this cluster that's the 4 RTX 3060s NOT reserved by Ollama: "0,1,2,3".
     visibleDevices: "all"
   runtimeClassName: nvidia
 

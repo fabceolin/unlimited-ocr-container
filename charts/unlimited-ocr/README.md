@@ -18,19 +18,25 @@ helm install ocr-gpu-infra ./charts/unlimited-ocr -n ocr --create-namespace \
 ### GPU partitioning with Ollama (this cluster)
 
 `dev` also runs an [Ollama](https://ollama.com) deployment (`ollama` namespace, `ollama-helm/ollama`
-chart) that permanently reserves the Tesla P40 + 1 RTX 3060 (index 0), outside of this chart's
-device-plugin pool entirely. Ollama gets those 2 GPUs via `runtimeClassName: nvidia` +
-`NVIDIA_VISIBLE_DEVICES=0,4` set directly on its container (no `nvidia.com/gpu` k8s resource
-request at all) — validated empirically to restrict container GPU visibility at the CDI/cgroup
-level, independent of whatever the app does internally.
+chart) that permanently reserves the Tesla P40 (index 4), outside of this chart's device-plugin
+pool entirely. Ollama gets that GPU via `runtimeClassName: nvidia` + `NVIDIA_VISIBLE_DEVICES=<P40
+UUID>` set directly on its container (no `nvidia.com/gpu` k8s resource request at all) — validated
+empirically to restrict container GPU visibility at the CDI/cgroup level, independent of whatever
+the app does internally.
 
-This chart's device plugin is correspondingly restricted to the 3 *remaining* RTX 3060s:
+Until 2026-08-08, Ollama also reserved 1 RTX 3060 (index 0) as a second card for models too large
+for the P40's 24GB alone. The model currently in use fits entirely on the P40, so index 0 was
+released back to this chart's pool (2026-08-08) — if a future model needs to split across 2 GPUs
+again, index 0 (or another currently-pooled RTX 3060) will need to be pulled back out of
+`visibleDevices` below and pinned on the Ollama deployment instead.
+
+This chart's device plugin is correspondingly restricted to the 4 *remaining* RTX 3060s:
 
 ```bash
 helm install ocr-gpu-infra ./charts/unlimited-ocr -n ocr --create-namespace \
   --set gpu.installDevicePlugin=true \
   --set job.enabled=false \
-  --set gpu.devicePlugin.visibleDevices="1\,2\,3"
+  --set gpu.devicePlugin.visibleDevices="0\,1\,2\,3"
 ```
 
 Why not per-GPU-model resource splitting (e.g. `nvidia.com/gpu-p40` vs `nvidia.com/gpu-rtx3060`)
