@@ -38,7 +38,9 @@ RUN python -m pip install wheel/sglang-0.0.0.dev11416+g92e8bb79e-py3-none-any.wh
   && python -m pip install kernels==0.11.7 pymupdf==1.27.2.2 requests
 
 COPY scripts/entrypoint.sh /usr/local/bin/unlimited-ocr
-RUN chmod +x /usr/local/bin/unlimited-ocr \
+COPY scripts/gpu_infer.py /usr/local/bin/unlimited-ocr-gpu
+COPY scripts/pdf_raster.py /usr/local/bin/pdf_raster.py
+RUN chmod +x /usr/local/bin/unlimited-ocr /usr/local/bin/unlimited-ocr-gpu \
   && mkdir -p /workspace /models/huggingface \
   && chmod -R 777 /models
 
@@ -84,6 +86,7 @@ RUN python -m pip install --upgrade pip setuptools wheel \
     psutil==7.2.2
 
 COPY scripts/cpu_infer.py /usr/local/bin/unlimited-ocr-cpu
+COPY scripts/pdf_raster.py /usr/local/bin/pdf_raster.py
 RUN chmod +x /usr/local/bin/unlimited-ocr-cpu \
   && mkdir -p /workspace /models/huggingface \
   && chmod -R 777 /models

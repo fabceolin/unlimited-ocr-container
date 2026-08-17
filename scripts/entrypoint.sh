@@ -5,4 +5,4 @@ if [[ "${1:-}" == "bash" || "${1:-}" == "sh" || "${1:-}" == "python" || "${1:-}"
   exec "$@"
 fi
 
-exec python /opt/Unlimited-OCR/infer.py "$@"
+exec python /usr/local/bin/unlimited-ocr-gpu "$@"

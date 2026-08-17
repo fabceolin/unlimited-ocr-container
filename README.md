@@ -42,6 +42,26 @@ mkdir -p data outputs log models
 
 The `models` mount keeps the Hugging Face cache between runs.
 
+## PDF raster safety
+
+Both images limit each rendered PDF page to 25,000,000 pixels before it is
+encoded or sent to the model. Pages below the limit keep the requested DPI;
+only oversized pages have their DPI reduced, independently and with the same
+aspect ratio. Override the limit with a positive integer:
+
+```bash
+docker run --rm -e OCR_MAX_PAGE_PIXELS=12000000 \
+  -v "$PWD/data:/data:ro" \
+  -v "$PWD/outputs:/workspace/outputs" \
+  ghcr.io/say4n/unlimited-ocr-container:cpu \
+  --pdf /data/document.pdf
+```
+
+An empty value uses the 25,000,000-pixel default. Invalid values fail before
+inference. When a page is reduced, the runner prints one short
+`PDF raster limit` line with the page number, requested/effective dimensions
+and DPI; it never includes encoded image content.
+
 ## Run with GPU
 
 PDF:
@@ -166,6 +186,9 @@ CPU image:
 --max_length N                   Maximum generated sequence length.
 --pdf_dpi N                      DPI used when converting PDF pages to images.
 ```
+
+`OCR_MAX_PAGE_PIXELS` is an environment variable shared by both images, not a
+command-line option.
 
 ## Publishing
 

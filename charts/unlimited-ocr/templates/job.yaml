@@ -79,8 +79,10 @@ spec:
             - "{{ .Values.ocr.pdfDpi }}"
             {{- end }}
             {{- end }}
-          {{- if or .Values.huggingface.token .Values.huggingface.existingSecret }}
           env:
+            - name: OCR_MAX_PAGE_PIXELS
+              value: {{ .Values.ocr.maxPagePixels | quote }}
+          {{- if or .Values.huggingface.token .Values.huggingface.existingSecret }}
             - name: HF_TOKEN
               valueFrom:
                 secretKeyRef:

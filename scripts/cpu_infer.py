@@ -6,11 +6,12 @@ from __future__ import annotations
 import argparse
 import os
 import shutil
-import tempfile
 from pathlib import Path
 
 import torch
 from transformers import AutoModel, AutoTokenizer
+
+from pdf_raster import configured_max_page_pixels, pdf_to_images
 
 
 PROMPT_SINGLE = "<image>document parsing."
@@ -43,21 +44,6 @@ def install_cuda_shim(device: torch.device) -> None:
     selected_device = device
     torch.Tensor.cuda = tensor_cuda
     torch.nn.Module.cuda = module_cuda
-
-
-def pdf_to_images(pdf_path: str, dpi: int) -> list[str]:
-    import fitz
-
-    doc = fitz.open(pdf_path)
-    tmp_dir = tempfile.mkdtemp(prefix="pdf_ocr_")
-    mat = fitz.Matrix(dpi / 72, dpi / 72)
-    paths = []
-    for i, page in enumerate(doc):
-        out = os.path.join(tmp_dir, f"page_{i + 1:04d}.png")
-        page.get_pixmap(matrix=mat).save(out)
-        paths.append(out)
-    doc.close()
-    return paths
 
 
 def collect_images(image_dir: str) -> list[str]:
@@ -146,11 +132,16 @@ def run_single_image(model, tokenizer, image_file: str, args, output_stem_value:
 
 
 def run(args) -> None:
+    max_page_pixels = configured_max_page_pixels()
     os.makedirs(args.output_dir, exist_ok=True)
     tokenizer, model = load_model(args.model_dir)
 
     if args.pdf:
-        image_files = pdf_to_images(args.pdf, args.pdf_dpi)
+        image_files = pdf_to_images(
+            args.pdf,
+            dpi=args.pdf_dpi,
+            max_page_pixels=max_page_pixels,
+        )
         model.infer_multi(
             tokenizer,
             prompt=PROMPT_MULTI,

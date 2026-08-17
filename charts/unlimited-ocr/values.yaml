@@ -84,6 +84,9 @@ ocr:
   concurrency: 1
   gpuIndex: "0"
   serverLog: /workspace/log/sglang_server.log
+  # Per-page PDF raster ceiling. Pages predicted to exceed it are rendered at
+  # a lower DPI; normal pages keep their requested DPI.
+  maxPagePixels: "25000000"
   # CPU-only option (ignored for image.variant=gpu):
   maxLength: ""
   pdfDpi: ""

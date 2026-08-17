@@ -52,6 +52,8 @@ spec:
               value: "{{ .Values.api.concurrency }}"
             - name: OCR_IMAGE_MODE
               value: {{ .Values.api.imageMode }}
+            - name: OCR_MAX_PAGE_PIXELS
+              value: {{ .Values.ocr.maxPagePixels | quote }}
             - name: OCR_JOB_TTL_SECONDS
               value: "{{ .Values.api.job.ttlSecondsAfterFinished }}"
             - name: OCR_JOB_ACTIVE_DEADLINE

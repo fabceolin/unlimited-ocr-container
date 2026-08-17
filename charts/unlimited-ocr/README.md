@@ -149,6 +149,20 @@ Result lands in `/srv/unlimited-ocr/outputs/document.md`. Each document run shou
 For image directories: `--set ocr.mode=image_dir --set ocr.input=my-images-subdir`.
 For the CPU image: `--set image.variant=cpu` (also drops GPU-only args automatically).
 
+PDF pages are capped at 25,000,000 raster pixels by default. Normal pages keep
+their requested DPI, while only oversized pages are rendered at a lower DPI.
+Set a different positive limit for either the direct Job or API-created Jobs:
+
+```bash
+helm install ocr-doc1 ./charts/unlimited-ocr -n ocr --create-namespace \
+  --set ocr.input=document.pdf \
+  --set ocr.maxPagePixels=12000000
+```
+
+Reduced pages emit a short `PDF raster limit` diagnostic containing only page,
+dimensions, DPI and the configured limit. An invalid value makes the runner
+fail before inference.
+
 See `values.yaml` for all knobs (concurrency, image_mode, model_dir, HF token, resource limits, etc).
 
 ## 4. Optional: HTTP API

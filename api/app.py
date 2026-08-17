@@ -30,6 +30,7 @@ HOST_LOG_DIR = os.environ["OCR_HOST_LOG_DIR"]
 HOST_MODELS_DIR = os.environ["OCR_HOST_MODELS_DIR"]
 DEFAULT_CONCURRENCY = os.environ.get("OCR_CONCURRENCY", "8")
 DEFAULT_IMAGE_MODE = os.environ.get("OCR_IMAGE_MODE", "gundam")
+MAX_PAGE_PIXELS = os.environ.get("OCR_MAX_PAGE_PIXELS", "25000000")
 JOB_TTL_SECONDS = int(os.environ.get("OCR_JOB_TTL_SECONDS", "600"))
 JOB_ACTIVE_DEADLINE = int(os.environ.get("OCR_JOB_ACTIVE_DEADLINE", "1800"))
 POLL_TIMEOUT_SECONDS = int(os.environ.get("OCR_POLL_TIMEOUT_SECONDS", "900"))
@@ -76,6 +77,7 @@ def build_job(request_id: str, image_mode: str, concurrency: int):
         image=IMAGE,
         image_pull_policy="IfNotPresent",
         args=args,
+        env=[client.V1EnvVar(name="OCR_MAX_PAGE_PIXELS", value=MAX_PAGE_PIXELS)],
         volume_mounts=[
             client.V1VolumeMount(name="data", mount_path="/data", read_only=True),
             client.V1VolumeMount(name="outputs", mount_path="/workspace/outputs"),
